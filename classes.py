@@ -12,33 +12,18 @@ import cv2
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from PIL import Image, ImageDraw
+
 
 class ProcessData:
-    # {class name: (color, RGB, class label)
+    #Farger
     annotation_color_allocation = {
-    'background' : ('black', (0, 0, 0), 0), 
-    'plantation' : ('red', (255, 0, 0), 1), 
-    'grassland_shrubland' : ('green', (0, 255, 0), 2), 
-    'mining' : ('blue', (0, 0, 255), 3), 
-    'logging' : ('yellow', (255, 255, 0), 4) 
+    'plantation' : 'red', 
+    'grassland_shrubland' : 'blue', 
+    'mining' : 'orange',
+    'logging' : 'green',
 }   
     def __init__(self):
-        #laste inn annotations fra JSON og bilder fra fil
-        parent_dir = os.path.split(os.getcwd())[0]
-        self.TRAIN_IMAGES_PATH=parent_dir+"/train_images" 
-
-        # plot and save RGB with annotation
-        with open('train_annotations.json', 'r') as file:
-            self.train_annotations = json.load(file)
-
-        self.polygons = {}
-        for index, image in enumerate(self.train_annotations["images"]):
-            polys=[]
-            for polygons in image["annotations"]:
-                geom = np.array(polygons['segmentation'])
-                polys.append((polygons["class"],geom))
-            self.polygons[self.train_annotations["images"][index]["file_name"]]=polys
+        pass
 
     def convert_to_geojson(self, data):
         """
@@ -63,9 +48,22 @@ class ProcessData:
             })
         return { "type": "FeatureCollection", "features": features }
     
-    def visualize_in_RGB(self, n=10, start=0):
+    def load_data(self):
+        #laste inn annotations fra JSON og bilder fra fil
+        parent_dir = os.path.split(os.getcwd())[0]
+        #print(parent_dir)
+        self.TRAIN_IMAGES_PATH=parent_dir+"/train_images"
+        #print(TRAIN_IMAGES_PATH)
+        train_image_num = len(os.listdir(self.TRAIN_IMAGES_PATH))
+        print(f"Number of train images: {train_image_num}") #176
+        # plot and save RGB with annotation
+        with open('train_annotations.json', 'r') as file:
+            self.train_annotations = json.load(file)
+    
+    def visualize_in_RGB(self, n, start=0):
         #Velg train_image_num for alle bilder
         #n=train_image_num
+        self.load_data()
         outfolder = 'rgb_annotation'  
         for index_for_train_image in range(start, n):
             filename = os.path.join(outfolder, f'rgb_with_annotation_{index_for_train_image}.png')
@@ -108,11 +106,11 @@ class ProcessData:
                 
                 for idx in range(len(gdf)):
                     # print(gdf.iloc[idx]['class'])
-                    gdf.iloc[[idx]].boundary.plot(ax=ax, color=ProcessData.annotation_color_allocation[gdf.iloc[idx]['class']][0])
+                    gdf.iloc[[idx]].boundary.plot(ax=ax, color=ProcessData.annotation_color_allocation[gdf.iloc[idx]['class']])
 
                 # Create and add custom legend
                 legend_elements = [Line2D([0], [0], marker='o', color='w', label=key,
-                                            markerfacecolor=value[0], markersize=10) 
+                                            markerfacecolor=value, markersize=10) 
                                     for key, value in ProcessData.annotation_color_allocation.items() 
                                     if key in gdf['class'].unique()]
                 ax.legend(handles=legend_elements, loc='upper left', bbox_to_anchor=(1, 1))
@@ -168,8 +166,20 @@ class ProcessData:
         
         return filled_data
 
+
+    def process_tif(self, input_path, output_path, method='interpolate'):
+        """Process TIF file and save result"""
+        data, meta, stats = self.analyze_nans(input_path)
+        if stats['nan_count'] > 0:
+            data = self.fill_nans(data, method)
+            
+        with rasterio.open(output_path, 'w', **meta) as dst:
+            dst.write(data)
+        return stats
+
     def visualize_nan_filling(self, start=0, n=1, band_start=1, band_n=12, method= "open_cv_inpaint_telea"):
         """Visualize NaN filling results for a specific band."""
+        self.load_data()
         for idx in range(start, n):
             for band in range(band_start, band_n +1):
                 SAMPLE_TIF_PATH = f'{self.TRAIN_IMAGES_PATH}/train_{idx}.tif'
@@ -193,80 +203,4 @@ class ProcessData:
                 """ output_png = tif_path.replace('.tif', '_comparison.png')
                 plt.savefig(output_png)
                 plt.show() """
-    
-    def rasterize(self):
-                #Test mask
-        shape = (1024, 1024)
-        self.RGB_raster_imgs={}
-        for current_image in range(len(self.train_annotations['images'])):
-            Image.MAX_IMAGE_PIXELS = None
-            img = Image.new('RGB', (shape[1], shape[0]), (0, 0, 0))  # (w, h)
-
-            for i in range(len(self.polygons[f"train_{current_image}.tif"])):
-
-                poly = self.polygons[f"train_{current_image}.tif"][i][1]
-                type_deforest= self.polygons[f"train_{current_image}.tif"][i][0]
-
-                points = list(zip(poly[::2], poly[1::2]))
-                points = [(x, y) for x, y in points]
-                color = ProcessData.annotation_color_allocation[type_deforest][1]
-                ImageDraw.Draw(img).polygon(points, outline=None, fill=color)
-            mask_2 = np.array(img)
-            self.RGB_raster_imgs[f"train_{current_image}.tif"]=mask_2
-    
-    def visualize_rasterized(self, start=0, n=10):
-        self.rasterize()
-        for i in range(start, n):
-            fig, ax = plt.subplots(1, 1, figsize=(12, 8))
-            plt.imshow(self.RGB_raster_imgs[f"train_{i}.tif"])
-
-        # Add padding around the actual image
-            plt.subplots_adjust(right=0.85)
-            
-            # Create legend text in whitespace
-            legend_x = 1.02  # Position outside of image
-
-            # Add legend items with consistent spacing
-            for idx, (label, color) in enumerate(ProcessData.annotation_color_allocation.items()):
-                y_pos = 0.9 - (idx * 0.1)  # Start from top with even spacing
-                plt.text(legend_x, y_pos, f'{label}', 
-                        transform=ax.transAxes,
-                        bbox=dict(facecolor=color[0], alpha=0.7, pad=5),
-                        color='white' if color[0] in ['black', 'blue', 'red'] else 'black')
-
-            plt.tight_layout()
-    
-    def label_pixels(self):
-        """Label pixels in the rasterized mask"""
-        self.rasterize()
-        self.labels = {}
-
-        rgb_to_class = {
-        tuple(v[1]): v[2]  # (R, G, B) -> class_label
-        for k, v in ProcessData.annotation_color_allocation.items()
-    }
-
-        for img_name, rgb_array in self.RGB_raster_imgs.items():
-            # Initialize label array with background class (0)
-            label_array = np.zeros(rgb_array.shape[:2], dtype=np.uint8)
-            
-            # Create masks for each class and assign labels
-            for (r, g, b), class_id in rgb_to_class.items():
-                if class_id == 0:  # Skip background (already initialized)
-                    continue
-                mask = (rgb_array[:, :, 0] == r) & \
-                    (rgb_array[:, :, 1] == g) & \
-                    (rgb_array[:, :, 2] == b)
-                label_array[mask] = class_id
-                
-            self.labels[img_name] = label_array
-
-    def preprocess_and_save(self, input_path, output_path, method='open_cv_inpaint_telea'):
-        """Process TIF file and save result"""
-        data, meta, stats = self.analyze_nans(input_path)
-        if stats['nan_count'] > 0:
-            data = self.fill_nans(data, method)
-            
-        with rasterio.open(output_path, 'w', **meta) as dst:
-            dst.write(data)
-        return stats
+        
