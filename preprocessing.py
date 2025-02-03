@@ -24,8 +24,8 @@ class ProcessData:
     def __init__(self):
         #laste inn annotations fra JSON og bilder fra fil
         self.base_dir = os.getcwd()
-        parent_dir = os.path.split(self.base_dir)[0]
-        self.TRAIN_IMAGES_PATH=parent_dir+"/train_images" 
+        self.parent_dir = os.path.split(self.base_dir)[0]
+        self.TRAIN_IMAGES_PATH=self.parent_dir+"/train_images" 
 
         # plot and save RGB with annotation
         with open('train_annotations.json', 'r') as file:
@@ -283,8 +283,8 @@ class ProcessData:
 
     def save_preprocessed(self):
         """Save preprocessed data and labels to disk"""
-        data_path = self.base_dir + '/prepared_data.npy'
-        labels_path = self.base_dir + '/labels.npy'
+        data_path = self.TRAIN_IMAGES_PATH + '/prepared_data.npy'
+        labels_path = self.TRAIN_IMAGES_PATH + '/labels.npy'
         np.save(data_path, self.prepared_data)
         np.save(labels_path, self.labels)
         print(f"Preprocessed data saved to {data_path}")
@@ -293,7 +293,7 @@ class ProcessData:
 
     def load_preprocessed_data(self):
         """Load preprocessed images and labels from disk"""
-        self.prepared_data = np.load(self.base_dir + '/prepared_data.npy')
-        self.labels = np.load(self.base_dir + '/labels.npy')
+        self.prepared_data = np.load(self.TRAIN_IMAGES_PATH + '/prepared_data.npy')
+        self.labels = np.load(self.TRAIN_IMAGES_PATH + '/labels.npy')
         print(f'Loaded preprocessed data from {self.base_dir}')
         return self.prepared_data, self.labels
