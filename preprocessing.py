@@ -7,7 +7,6 @@ import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 import numpy as np
 import tifffile as tiff
-from scipy.interpolate import griddata
 import cv2
 from PIL import Image, ImageDraw
 from natsort import natsorted
@@ -157,14 +156,6 @@ class ProcessData:
                     inpaintRadius=kwargs.get('inpaint_radius', 3),
                     flags=cv2.INPAINT_TELEA if method == 'opencv_inpaint_telea' else cv2.INPAINT_NS
                 )
-            elif method == 'nearest':
-                # SciPy's nearest neighbor interpolation
-                points = np.argwhere(~np.isnan(band))
-                values = band[~np.isnan(band)]
-                grid = np.indices(band.shape).reshape(2, -1).T
-                filled = griddata(points, values, grid, method='nearest').reshape(band.shape)
-            else:
-                raise ValueError(f"Unsupported method: {method}")
             
             filled_data[b] = filled
         
