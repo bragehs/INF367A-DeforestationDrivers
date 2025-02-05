@@ -7,12 +7,15 @@ import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 import numpy as np
 import tifffile as tiff
+from scipy.interpolate import griddata
 import cv2
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
 from PIL import Image, ImageDraw
-from natsort import natsorted
 
 class ProcessData:
-    # structure: {class name: (color, RGB, class label)
+    # {class name: (color, RGB, class label)
     annotation_color_allocation = {
     'background' : ('black', (0, 0, 0), 0), 
     'plantation' : ('red', (255, 0, 0), 1), 
@@ -22,24 +25,20 @@ class ProcessData:
 }   
     def __init__(self):
         #laste inn annotations fra JSON og bilder fra fil
-        self.base_dir = os.getcwd()
-        self.parent_dir = os.path.split(self.base_dir)[0]
-        self.TRAIN_IMAGES_PATH=self.parent_dir+"/train_images" 
+        parent_dir = os.path.split(os.getcwd())[0]
+        self.TRAIN_IMAGES_PATH=parent_dir+"/train_images" 
 
         # plot and save RGB with annotation
         with open('train_annotations.json', 'r') as file:
             self.train_annotations = json.load(file)
 
         self.polygons = {}
-        self.images = []
-        for image in self.train_annotations["images"]:
+        for index, image in enumerate(self.train_annotations["images"]):
             polys=[]
             for polygons in image["annotations"]:
                 geom = np.array(polygons['segmentation'])
                 polys.append((polygons["class"],geom))
-            self.polygons[image["file_name"]]=polys
-
-            self.images.append(image["file_name"])
+            self.polygons[self.train_annotations["images"][index]["file_name"]]=polys
 
     def convert_to_geojson(self, data):
         """
@@ -156,6 +155,14 @@ class ProcessData:
                     inpaintRadius=kwargs.get('inpaint_radius', 3),
                     flags=cv2.INPAINT_TELEA if method == 'opencv_inpaint_telea' else cv2.INPAINT_NS
                 )
+            elif method == 'nearest':
+                # SciPy's nearest neighbor interpolation
+                points = np.argwhere(~np.isnan(band))
+                values = band[~np.isnan(band)]
+                grid = np.indices(band.shape).reshape(2, -1).T
+                filled = griddata(points, values, grid, method='nearest').reshape(band.shape)
+            else:
+                raise ValueError(f"Unsupported method: {method}")
             
             filled_data[b] = filled
         
@@ -232,14 +239,14 @@ class ProcessData:
     def label_pixels(self):
         """Label pixels in the rasterized mask"""
         self.rasterize()
-        self.labels = np.empty((len(self.RGB_raster_imgs), 1024, 1024), dtype=np.uint8)
+        self.labels = {}
 
         rgb_to_class = {
         tuple(v[1]): v[2]  # (R, G, B) -> class_label
         for k, v in ProcessData.annotation_color_allocation.items()
     }
 
-        for idx, rgb_array in enumerate(self.RGB_raster_imgs.values()):
+        for img_name, rgb_array in self.RGB_raster_imgs.items():
             # Initialize label array with background class (0)
             label_array = np.zeros(rgb_array.shape[:2], dtype=np.uint8)
             
@@ -252,53 +259,14 @@ class ProcessData:
                     (rgb_array[:, :, 2] == b)
                 label_array[mask] = class_id
                 
-            self.labels[idx] = label_array
+            self.labels[img_name] = label_array
 
-    def normalize(self, data):
-        """Normalize each band to 0-1 range."""
-        normalized_data = np.zeros_like(data, dtype=np.float32)
-        for b in range(data.shape[0]):
-            band = data[b]
-            min_val = np.min(band)
-            max_val = np.max(band)
-            if max_val != min_val:
-                normalized_band = (band - min_val) / (max_val - min_val)
-            else:
-                # Handle case where band is constant (avoid division by zero)
-                normalized_band = np.zeros_like(band)
-            normalized_data[b] = normalized_band
-        return normalized_data
-
-    def preprocess(self, method='open_cv_inpaint_telea'):
+    def preprocess_and_save(self, input_path, output_path, method='open_cv_inpaint_telea'):
         """Process TIF file and save result"""
-        self.prepared_data = np.zeros((len(self.images), 12, 1024, 1024))
-        for idx, img in enumerate(natsorted(self.images)):
-            print('Processing', img)
-            input_path = f'{self.TRAIN_IMAGES_PATH}/{img}'
-            data, meta, stats = self.analyze_nans(input_path)
-            filled_data = self.fill_nans(data, method=method)
-            self.prepared_data[idx] = self.normalize(filled_data)
-
-
-        self.label_pixels()
-
-        print("NaN values filled and pixels labeled")
-        print("self.prepared_data.shape:", self.prepared_data.shape)
-        print("self.labels.shape:", self.labels.shape)
-
-    def save_preprocessed(self):
-        """Save preprocessed data and labels to disk"""
-        data_path = self.TRAIN_IMAGES_PATH + '/prepared_data.npy'
-        labels_path = self.TRAIN_IMAGES_PATH + '/labels.npy'
-        np.save(data_path, self.prepared_data)
-        np.save(labels_path, self.labels)
-        print(f"Preprocessed data saved to {data_path}")
-        print(f"Labels saved to {labels_path}")
-
-
-    def load_preprocessed_data(self):
-        """Load preprocessed images and labels from disk"""
-        self.prepared_data = np.load(self.TRAIN_IMAGES_PATH + '/prepared_data.npy')
-        self.labels = np.load(self.TRAIN_IMAGES_PATH + '/labels.npy')
-        print(f'Loaded preprocessed data from {self.base_dir}')
-        return self.prepared_data, self.labels
+        data, meta, stats = self.analyze_nans(input_path)
+        if stats['nan_count'] > 0:
+            data = self.fill_nans(data, method)
+            
+        with rasterio.open(output_path, 'w', **meta) as dst:
+            dst.write(data)
+        return stats
