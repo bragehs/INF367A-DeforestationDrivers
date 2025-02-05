@@ -254,6 +254,21 @@ class ProcessData:
                 
             self.labels[idx] = label_array
 
+    def normalize(self, data):
+        """Normalize each band to 0-1 range."""
+        normalized_data = np.zeros_like(data, dtype=np.float32)
+        for b in range(data.shape[0]):
+            band = data[b]
+            min_val = np.min(band)
+            max_val = np.max(band)
+            if max_val != min_val:
+                normalized_band = (band - min_val) / (max_val - min_val)
+            else:
+                # Handle case where band is constant (avoid division by zero)
+                normalized_band = np.zeros_like(band)
+            normalized_data[b] = normalized_band
+        return normalized_data
+
     def preprocess(self, method='open_cv_inpaint_telea'):
         """Process TIF file and save result"""
         self.prepared_data = np.zeros((len(self.images), 12, 1024, 1024))
@@ -261,9 +276,8 @@ class ProcessData:
             print('Processing', img)
             input_path = f'{self.TRAIN_IMAGES_PATH}/{img}'
             data, meta, stats = self.analyze_nans(input_path)
-            if stats['nan_count'] > 0:
-                self.prepared_data[idx] = self.fill_nans(data, method=method)
-
+            filled_data = self.fill_nans(data, method=method)
+            self.prepared_data[idx] = self.normalize(filled_data)
 
 
         self.label_pixels()
