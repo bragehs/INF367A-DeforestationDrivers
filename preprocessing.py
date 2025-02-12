@@ -7,7 +7,6 @@ import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 import numpy as np
 import tifffile as tiff
-from scipy.interpolate import griddata
 import cv2
 from PIL import Image, ImageDraw
 from natsort import natsorted
@@ -106,7 +105,6 @@ class ProcessData:
 
                 fig, ax = plt.subplots(figsize=(10, 10))
                 ax.imshow(rgb_image)
-                ax.invert_yaxis()
                 
                 for idx in range(len(gdf)):
                     # print(gdf.iloc[idx]['class'])
@@ -157,14 +155,6 @@ class ProcessData:
                     inpaintRadius=kwargs.get('inpaint_radius', 3),
                     flags=cv2.INPAINT_TELEA if method == 'opencv_inpaint_telea' else cv2.INPAINT_NS
                 )
-            elif method == 'nearest':
-                # SciPy's nearest neighbor interpolation
-                points = np.argwhere(~np.isnan(band))
-                values = band[~np.isnan(band)]
-                grid = np.indices(band.shape).reshape(2, -1).T
-                filled = griddata(points, values, grid, method='nearest').reshape(band.shape)
-            else:
-                raise ValueError(f"Unsupported method: {method}")
             
             filled_data[b] = filled
         
@@ -196,18 +186,35 @@ class ProcessData:
                 plt.savefig(output_png)
                 plt.show() """
     
-    def rasterize(self):
-                #Test mask
+    def create_polygons(self, json_file='train_annotations.json'):
+        with open(json_file, 'r') as file:
+            input_annotations = json.load(file)
+
+        polygons = {}
+
+        for image in input_annotations["images"]:
+            polys = []
+            for annotation in image["annotations"]:
+                geom = np.array(annotation['segmentation'])
+                polys.append((annotation["class"], geom))
+            polygons[image["file_name"]] = polys
+        return polygons
+    
+    def rasterize(self, json_file='train_annotations.json'):
+        with open(json_file, 'r') as file:
+            input_annotations = json.load(file)
         shape = (1024, 1024)
         self.RGB_raster_imgs={}
-        for current_image in range(len(self.train_annotations['images'])):
+        polygons = self.create_polygons(json_file)
+        
+        for current_image in range(len(input_annotations['images'])):
             Image.MAX_IMAGE_PIXELS = None
             img = Image.new('RGB', (shape[1], shape[0]), (0, 0, 0))  # (w, h)
 
-            for i in range(len(self.polygons[f"train_{current_image}.tif"])):
+            for i in range(len(polygons[f"train_{current_image}.tif"])):
 
-                poly = self.polygons[f"train_{current_image}.tif"][i][1]
-                type_deforest= self.polygons[f"train_{current_image}.tif"][i][0]
+                poly = polygons[f"train_{current_image}.tif"][i][1]
+                type_deforest= polygons[f"train_{current_image}.tif"][i][0]
 
                 points = list(zip(poly[::2], poly[1::2]))
                 points = [(x, y) for x, y in points]
@@ -216,8 +223,8 @@ class ProcessData:
             mask_2 = np.array(img)
             self.RGB_raster_imgs[f"train_{current_image}.tif"]=mask_2
     
-    def visualize_rasterized(self, start=0, n=10):
-        self.rasterize()
+    def visualize_rasterized(self, start=0, n=10, json_file='train_annotations.json'):
+        self.rasterize(json_file)
         for i in range(start, n):
             fig, ax = plt.subplots(1, 1, figsize=(12, 8))
             plt.imshow(self.RGB_raster_imgs[f"train_{i}.tif"])
@@ -261,19 +268,18 @@ class ProcessData:
                     (rgb_array[:, :, 2] == b)
                 label_array[mask] = class_id
                 
-            self.labels[idx] = label_array
+            self.labels[idx] = label_array        
 
     def preprocess(self, method='open_cv_inpaint_telea'):
         """Process TIF file and save result"""
+
         self.prepared_data = np.zeros((len(self.images), 12, 1024, 1024))
         for idx, img in enumerate(natsorted(self.images)):
             print('Processing', img)
             input_path = f'{self.TRAIN_IMAGES_PATH}/{img}'
             data, meta, stats = self.analyze_nans(input_path)
-            if stats['nan_count'] > 0:
-                self.prepared_data[idx] = self.fill_nans(data, method=method)
-
-
+            filled_data = self.fill_nans(data, method=method)
+            self.prepared_data[idx] = filled_data
 
         self.label_pixels()
 
@@ -297,3 +303,4 @@ class ProcessData:
         self.labels = np.load(self.TRAIN_IMAGES_PATH + '/labels.npy')
         print(f'Loaded preprocessed data from {self.base_dir}')
         return self.prepared_data, self.labels
+
