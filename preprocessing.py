@@ -11,7 +11,7 @@ import cv2
 from PIL import Image, ImageDraw
 from natsort import natsorted
 
-class ProcessData:
+class PreProcessing:
     # structure: {class name: (color, RGB, class label)
     annotation_color_allocation = {
     'background' : ('black', (0, 0, 0), 0), 
@@ -25,7 +25,6 @@ class ProcessData:
         self.base_dir = os.getcwd()
         self.parent_dir = os.path.split(self.base_dir)[0]
         self.TRAIN_IMAGES_PATH=self.parent_dir+"/train_images" 
-
         # plot and save RGB with annotation
         with open('train_annotations.json', 'r') as file:
             self.train_annotations = json.load(file)
@@ -108,12 +107,12 @@ class ProcessData:
                 
                 for idx in range(len(gdf)):
                     # print(gdf.iloc[idx]['class'])
-                    gdf.iloc[[idx]].boundary.plot(ax=ax, color=ProcessData.annotation_color_allocation[gdf.iloc[idx]['class']][0])
+                    gdf.iloc[[idx]].boundary.plot(ax=ax, color=PreProcessing.annotation_color_allocation[gdf.iloc[idx]['class']][0])
 
                 # Create and add custom legend
                 legend_elements = [Line2D([0], [0], marker='o', color='w', label=key,
                                             markerfacecolor=value[0], markersize=10) 
-                                    for key, value in ProcessData.annotation_color_allocation.items() 
+                                    for key, value in PreProcessing.annotation_color_allocation.items() 
                                     if key in gdf['class'].unique()]
                 ax.legend(handles=legend_elements, loc='upper left', bbox_to_anchor=(1, 1))
 
@@ -218,7 +217,7 @@ class ProcessData:
 
                 points = list(zip(poly[::2], poly[1::2]))
                 points = [(x, y) for x, y in points]
-                color = ProcessData.annotation_color_allocation[type_deforest][1]
+                color = PreProcessing.annotation_color_allocation[type_deforest][1]
                 ImageDraw.Draw(img).polygon(points, outline=None, fill=color)
             mask_2 = np.array(img)
             self.RGB_raster_imgs[f"train_{current_image}.tif"]=mask_2
@@ -236,7 +235,7 @@ class ProcessData:
             legend_x = 1.02  # Position outside of image
 
             # Add legend items with consistent spacing
-            for idx, (label, color) in enumerate(ProcessData.annotation_color_allocation.items()):
+            for idx, (label, color) in enumerate(PreProcessing.annotation_color_allocation.items()):
                 y_pos = 0.9 - (idx * 0.1)  # Start from top with even spacing
                 plt.text(legend_x, y_pos, f'{label}', 
                         transform=ax.transAxes,
@@ -252,7 +251,7 @@ class ProcessData:
 
         rgb_to_class = {
         tuple(v[1]): v[2]  # (R, G, B) -> class_label
-        for k, v in ProcessData.annotation_color_allocation.items()
+        for k, v in PreProcessing.annotation_color_allocation.items()
     }
 
         for idx, rgb_array in enumerate(self.RGB_raster_imgs.values()):
