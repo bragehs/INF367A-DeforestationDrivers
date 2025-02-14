@@ -7,6 +7,116 @@ from tqdm.auto import tqdm
 from sklearn.model_selection import train_test_split
 from sklearn.utils.class_weight import compute_class_weight
 import os
+from typing import Tuple, Optional, List
+import random
+import albumentations as A
+
+class SatelliteSegmentationDataset(Dataset):
+    """
+    Dataset class for satellite image segmentation with smart patch extraction
+    and augmentation strategies.
+    """
+
+    def __init__(
+        self,
+        images: np.ndarray,  # Shape: (N, C, H, W)
+        labels: np.ndarray,  # Shape: (N, H, W)
+        patch_size: int = 256,
+        patch_stride: Optional[int] = 128,
+        min_valid_pixels: float = 0.05,
+        augment: bool = True,
+        max_patches_per_image: Optional[int] = None,
+    ):
+        self.images = images
+        self.labels = labels
+        self.patch_size = patch_size
+        self.patch_stride = patch_stride or patch_size
+        self.min_valid_pixels = min_valid_pixels
+        self.augment = augment
+        self.max_patches_per_image = max_patches_per_image
+
+        # Initialize augmentation pipeline
+        if self.augment:
+            self.transform = A.Compose([
+                A.RandomRotate90(p=0.5),
+                A.HorizontalFlip(p=0.5),
+                A.VerticalFlip(p=0.5),
+
+                A.OneOf([
+                    A.ElasticTransform(alpha=120, sigma=120 * 0.05, p=0.5),
+                    A.GridDistortion(num_steps=5, distort_limit=0.3, p=0.5),
+                ], p=0.3),
+                A.GaussianBlur(blur_limit=(3, 7), p=0.2),
+                A.RandomGamma(gamma_limit=(80, 120), p=0.3),
+            ])
+        self.patches = self._create_patches()
+
+    def _create_patches(self) -> List[Tuple[np.ndarray, np.ndarray]]:
+        """
+        Create patches from images with smart extraction strategy.
+        Returns list of (image_patch, label_patch) tuples.
+        """
+        patches = []
+        N, C, H, W = self.images.shape
+
+        for img_idx in range(N):
+            image = self.images[img_idx]  # (C, H, W)
+            label = self.labels[img_idx]  # (H, W)
+
+            # Track valid patches for this image
+            image_patches = []
+
+            for y in range(0, H - self.patch_size + 1, self.patch_stride):
+                for x in range(0, W - self.patch_size + 1, self.patch_stride):
+                    img_patch = image[
+                        :, y : y + self.patch_size, x : x + self.patch_size
+                    ]
+                    label_patch = label[
+                        y : y + self.patch_size, x : x + self.patch_size
+                    ]
+
+                    # Check if patch contains enough non-background pixels
+                    if self._is_valid_patch(label_patch):
+                        image_patches.append((img_patch, label_patch))
+
+            # If max_patches_per_image is set, randomly sample patches
+            if (
+                self.max_patches_per_image
+                and len(image_patches) > self.max_patches_per_image
+            ):
+                image_patches = random.sample(image_patches, self.max_patches_per_image)
+
+            patches.extend(image_patches)
+
+        return patches
+
+    def _is_valid_patch(self, label_patch: np.ndarray) -> bool:
+        """
+        Check if patch contains enough non-background pixels.
+        """
+        non_background = (label_patch > 0).sum()
+        total_pixels = label_patch.size
+        return (non_background / total_pixels) >= self.min_valid_pixels
+
+    def __len__(self) -> int:
+        return len(self.patches)
+
+    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
+        img_patch, label_patch = self.patches[idx]
+
+        if self.augment:
+            # Transpose image to (H, W, C) for albumentation
+            img_patch = np.transpose(img_patch, (1, 2, 0))
+            transformed = self.transform(image=img_patch, mask=label_patch)
+            img_patch = np.transpose(transformed["image"], (2, 0, 1))
+            label_patch = transformed["mask"]
+
+        return (
+            torch.as_tensor(img_patch, dtype=torch.float32),
+            torch.as_tensor(label_patch, dtype=torch.long),
+        )
+
+
 
 class WeightedIoULoss(nn.Module):
     def __init__(self, num_classes, weights=None):
@@ -62,50 +172,6 @@ class LogCoshDiceLoss(nn.Module):
         loss = torch.mean(torch.stack(dice_losses, dim=1))  # (B, C) -> scalar
         return loss  
 
-class Sentinel2SegmentationDataset(Dataset):
-    def __init__(self, images, labels, patch_size=128, stride=128, transform=None):
-        """
-        images: Tensor or numpy array of shape (N, 12, H, W)
-        labels: Tensor or numpy array of shape (N, H, W)
-        patch_size: Size of the patches (default 256)
-        stride: Stride for patching (default 128 for overlapping)
-        transform: Optional image transformations
-        """
-        self.images = images
-        self.labels = labels
-        self.patch_size = patch_size
-        self.stride = stride
-        self.transform = transform
-        self.patches = []  # Store (image_patch, label_patch) pairs
-
-        self.create_patches()
-
-    def create_patches(self):
-        """Extracts patches from the dataset."""
-        N, C, H, W = self.images.shape
-
-        for i in range(N):
-            img = self.images[i]  # Shape (12, H, W)
-            lbl = self.labels[i]  # Shape (H, W)
-
-            # Divide the 1024 image dimension into 512x512 patches with no overlap
-            for y in range(0, H, self.patch_size):
-                for x in range(0, W, self.patch_size):
-                    img_patch = img[:, y:y+self.patch_size, x:x+self.patch_size]
-                    lbl_patch = lbl[y:y+self.patch_size, x:x+self.patch_size]
-                    self.patches.append((img_patch, lbl_patch))
-
-    def __len__(self):
-        return len(self.patches)
-
-    def __getitem__(self, idx):
-        img_patch, lbl_patch = self.patches[idx]
-
-        # Apply transformations if any
-        if self.transform:
-            img_patch = self.transform(img_patch)
-
-        return torch.as_tensor(img_patch, dtype=torch.float32), torch.as_tensor(lbl_patch, dtype=torch.long)
 
 
 class RunTraining:
@@ -121,33 +187,12 @@ class RunTraining:
         self.loss_function = loss_function
         self.optimizer = optimizer
         self.scheduler = scheduler
-    
-    
-    def normalize_10000(self, x):
-        '''normalize all bands equally to 0-1 range'''
-        return x.astype('float32') / 10000
-    
-    def satlas_normalization(self, tci_rgb, bands):
-        '''normalize bands and tci_rgb separately, as specified for satlas model'''
-        tci_norm = (tci_rgb - tci_rgb.min()) / (tci_rgb.max() - tci_rgb.min())
-
-        # bands: list of np arrays [B05, B06, B07, B08, B11, B12], each 16-bit
-        normalized_bands = []
-        for band in bands:
-            norm_band = np.clip(band / 8160.0, 0, 1)
-            normalized_bands.append(norm_band)
-
-        # Stack into final tensor
-        normalized_bands = np.array(normalized_bands)
-        print(normalized_bands.shape, tci_norm.shape)
-        return np.concatenate([tci_norm, normalized_bands], axis=1)
-    
 
     def create_dataloaders(self, val_size=0.15):
         # First split into train and temp (val + test)
         X_train, X_val, y_train, y_val = train_test_split(self.data, self.labels, test_size=val_size, random_state=42)
-        train_dataset = Sentinel2SegmentationDataset(X_train, y_train)
-        val_dataset = Sentinel2SegmentationDataset(X_val, y_val)
+        train_dataset = SatelliteSegmentationDataset(X_train, y_train)
+        val_dataset = SatelliteSegmentationDataset(X_val, y_val)
         train_dataloader = DataLoader(train_dataset, batch_size=self.batch_size, shuffle=True, num_workers=4)
         val_dataloader = DataLoader(val_dataset, batch_size=self.batch_size, shuffle=False, num_workers=4)
         return train_dataloader, val_dataloader

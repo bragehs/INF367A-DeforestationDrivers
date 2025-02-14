@@ -20,25 +20,26 @@ class PreProcessing:
     'mining' : ('blue', (0, 0, 255), 3), 
     'logging' : ('yellow', (255, 255, 0), 4) 
 }   
-    def __init__(self):
+    def __init__(self, train_set=True):
         #laste inn annotations fra JSON og bilder fra fil
         self.base_dir = os.getcwd()
         self.parent_dir = os.path.split(self.base_dir)[0]
-        self.TRAIN_IMAGES_PATH=self.parent_dir+"/train_images" 
+        self.TRAIN_IMAGES_PATH=self.parent_dir+"/train_images"
+        self.TEST_IMAGES_PATH=self.parent_dir+"/evaluation_images" 
         # plot and save RGB with annotation
         with open('train_annotations.json', 'r') as file:
             self.train_annotations = json.load(file)
 
+        self.train_set=train_set
         self.polygons = {}
-        self.images = []
+        self.train_images = [f for f in os.listdir(self.TRAIN_IMAGES_PATH) if f.endswith('.tif')]
+        self.test_images = [f for f in os.listdir(self.TEST_IMAGES_PATH) if f.endswith('.tif')]
         for image in self.train_annotations["images"]:
             polys=[]
             for polygons in image["annotations"]:
                 geom = np.array(polygons['segmentation'])
                 polys.append((polygons["class"],geom))
             self.polygons[image["file_name"]]=polys
-
-            self.images.append(image["file_name"])
 
     def convert_to_geojson(self, data):
         """
@@ -67,16 +68,16 @@ class PreProcessing:
         #Velg train_image_num for alle bilder
         #n=train_image_num
         outfolder = 'rgb_annotation'  
-        for index_for_train_image in range(start, n):
-            filename = os.path.join(outfolder, f'rgb_with_annotation_{index_for_train_image}.png')
+        for index_for_image in range(start, n):
+            filename = os.path.join(outfolder, f'rgb_with_annotation_{index_for_image}.png')
             if os.path.exists(filename):
                 print(f"File {filename} already exists. Skipping.")
                 continue
             # Visualize sample tif data
-            SAMPLE_TIF_PATH = f'{self.TRAIN_IMAGES_PATH}/train_{index_for_train_image}.tif'
+            SAMPLE_TIF_PATH = f'{self.TRAIN_IMAGES_PATH}/train_{index_for_image}.tif' if self.train_set else f'{self.TEST_IMAGES_PATH}/evaluation_{index_for_image}.tif'
             annotation_data = self.train_annotations['images']
             id_to_annotation = {item['file_name']: item for item in annotation_data}
-            annotation_data = id_to_annotation[ f'train_{index_for_train_image}.tif']['annotations']
+            annotation_data = id_to_annotation[ f'train_{index_for_image}.tif']['annotations']
 
             #annotation_data = train_annotations['images'][index_for_train_image]['annotations']
             
@@ -117,7 +118,7 @@ class PreProcessing:
                 ax.legend(handles=legend_elements, loc='upper left', bbox_to_anchor=(1, 1))
 
                 # gdf.boundary.plot(ax=ax, color='red')
-                plt.title(f'idx {index_for_train_image}: RGB Image with annotation')
+                plt.title(f'idx {index_for_image}: RGB Image with annotation')
 
                 #Om man vil lagre
                 #plt.savefig(filename)
@@ -143,27 +144,38 @@ class PreProcessing:
         
         for b in range(data.shape[0]):  # Iterate over bands
             band = data[b].copy()
+            # Ensure the data is in the correct format for cv2.inpaint
+            band = band.astype(np.float32)
             mask = np.isnan(band).astype(np.uint8)
             
             if method == 'open_cv_inpaint_telea' or method == 'open_cv_inpaint_ns':
                 # Replace NaNs with 0 for inpainting
                 band[mask == 1] = 0
+                # Convert band to proper format for inpainting
+                band_norm = cv2.normalize(band, None, 0, 255, cv2.NORM_MINMAX)
+                band_uint8 = band_norm.astype(np.uint8)
+                
                 filled = cv2.inpaint(
-                    band.astype(np.float32),
-                    mask * 255,
+                    band_uint8,
+                    mask,  # Must be uint8
                     inpaintRadius=kwargs.get('inpaint_radius', 3),
-                    flags=cv2.INPAINT_TELEA if method == 'opencv_inpaint_telea' else cv2.INPAINT_NS
+                    flags=cv2.INPAINT_TELEA if method == 'open_cv_inpaint_telea' else cv2.INPAINT_NS
                 )
-            
+                
+                # Convert back to original range
+                filled = filled.astype(np.float32)
+                filled = cv2.normalize(filled, None, np.min(band[~np.isnan(band)]), np.max(band[~np.isnan(band)]), cv2.NORM_MINMAX)
+                
             filled_data[b] = filled
         
         return filled_data
-
+    
+        return filled_data
     def visualize_nan_filling(self, start=0, n=1, band_start=1, band_n=12, method= "open_cv_inpaint_telea"):
         """Visualize NaN filling results for a specific band."""
         for idx in range(start, n):
             for band in range(band_start, band_n +1):
-                SAMPLE_TIF_PATH = f'{self.TRAIN_IMAGES_PATH}/train_{idx}.tif'
+                SAMPLE_TIF_PATH = f'{self.TRAIN_IMAGES_PATH}/train_{idx}.tif' if self.train_set else f'{self.TEST_IMAGES_PATH}/evaluation_{idx}.tif'
                 with rasterio.open(SAMPLE_TIF_PATH) as src:
                     original = src.read(band)
     
@@ -267,24 +279,67 @@ class PreProcessing:
                     (rgb_array[:, :, 2] == b)
                 label_array[mask] = class_id
                 
-            self.labels[idx] = label_array        
+            self.labels[idx] = label_array  
+    
+    
+    def normalize_sentinel2(self, tci_rgb, bands, batch_size=64):
+        """Normalize Sentinel-2 imagery with memory-efficient batch processing"""
+        # Get input shapes
+        n_samples = tci_rgb.shape[0]
+        height = tci_rgb.shape[2]
+        width = tci_rgb.shape[3]
+        
+        # Pre-allocate output array preserving spatial dimensions
+        n_channels = tci_rgb.shape[1] + bands.shape[1]
+        output = np.empty((n_samples, n_channels, height, width), dtype=np.float32)
+        
+        # Process in batches
+        for start_idx in range(0, n_samples, batch_size):
+            end_idx = min(start_idx + batch_size, n_samples)
+            
+            # Process TCI batch preserving spatial dimensions
+            tci_batch = tci_rgb[start_idx:end_idx]
+            tci_min = tci_batch.min(axis=(2,3), keepdims=True)
+            tci_range = tci_batch.max(axis=(2,3), keepdims=True) - tci_min
+            tci_batch = (tci_batch - tci_min) / tci_range
+            
+            # Process bands batch preserving spatial dimensions
+            bands_batch = bands[start_idx:end_idx] / 8160.0
+            np.clip(bands_batch, 0, 1, out=bands_batch)
+            
+            # Store in output array
+            output[start_idx:end_idx, :tci_rgb.shape[1]] = tci_batch
+            output[start_idx:end_idx, tci_rgb.shape[1]:] = bands_batch
+            
+            # Free memory
+            del tci_batch
+            del bands_batch
+            
+        return output      
 
     def preprocess(self, method='open_cv_inpaint_telea'):
         """Process TIF file and save result"""
-
-        self.prepared_data = np.zeros((len(self.images), 12, 1024, 1024))
-        for idx, img in enumerate(natsorted(self.images)):
+        images = self.train_images if self.train_set else self.test_images
+        self.prepared_data = np.zeros((len(images), 12, 1024, 1024))
+        for idx, img in enumerate(natsorted(images)):
             print('Processing', img)
-            input_path = f'{self.TRAIN_IMAGES_PATH}/{img}'
+            input_path = f'{self.TRAIN_IMAGES_PATH}/{img}' if self.train_set else f'{self.TEST_IMAGES_PATH}/{img}'
             data, meta, stats = self.analyze_nans(input_path)
             filled_data = self.fill_nans(data, method=method)
             self.prepared_data[idx] = filled_data
 
-        self.label_pixels()
+        bands = [1, 2, 3, 4, 5, 6, 7, 10, 11]
+        self.prepared_data = self.prepared_data[:, bands]
+        self.prepared_data = self.normalize_sentinel2(self.prepared_data[:, 0:3], self.prepared_data[:, 3:])
+        if self.train_set:
+            self.label_pixels()
+            print("NaN values filled and pixels labeled")
+            print("self.labels.shape:", self.labels.shape)
+            
 
-        print("NaN values filled and pixels labeled")
+        
         print("self.prepared_data.shape:", self.prepared_data.shape)
-        print("self.labels.shape:", self.labels.shape)
+      
 
     def save_preprocessed(self):
         """Save preprocessed data and labels to disk"""
