@@ -60,59 +60,121 @@ class PostProcessing:
         
     
 
-    def predict_probs(self, model, test_dataloader):
-        model.eval()
-        all_probs = []
+    def predict_probs(self):
+        """
+        Predicts the probabilities of each class for each pixel in the image.
+
+        Args:
+            model (torch.nn.Module): The trained model.
+            test_dataloader (torch.utils.data.DataLoader): The DataLoader for the test dataset.
+
+        Returns:
+            list: A list of predictions. Each element contains 64 patches of predictions,
+                with each patch containing 128x128 probabilities as tensors for each class.
+        """
+        print("Starting prediction...")
+        all_predictions = []
         with torch.no_grad():
-            for data in test_dataloader:
+            self.model.eval()
+            predictions = []
+            for data in self.test_dataloader:
                 data = data.to(self.device)
-                output = model(data)[0]  # Shape: (batch_size, 5, 128, 128)
-                probs = torch.nn.functional.softmax(output, dim=1)
-                # Permute to (batch_size, 128, 128, 5) and collect
-                probs = probs.permute(0, 2, 3, 1).cpu().numpy()
-                all_probs.append(probs)
-        # Concatenate all batches into (num_patches, 128, 128, 5)
-        return np.concatenate(all_probs, axis=0)
+
+                output = self.model(data)[0]  # Assuming model returns a tuple
+                probs = torch.nn.functional.softmax(output, dim=1)  # Keep as tensor
+
+                # Iterate through the batch
+                batch_predictions = []
+                for batch_idx in range(data.shape[0]):
+                    # Get coordinates of each pixel in the image
+                    height, width = data.shape[2], data.shape[3]
+                    x_coords = torch.arange(height, device=self.device)
+                    y_coords = torch.arange(width, device=self.device)
+                    x_grid, y_grid = torch.meshgrid(x_coords, y_coords, indexing='ij')
+                    x_coords = x_grid.flatten()
+                    y_coords = y_grid.flatten()
+
+                    # Combine coordinates and probabilities
+                    image_predictions = []
+                    for i in range(len(x_coords)):
+                        x = x_coords[i].item()
+                        y = y_coords[i].item()
+                        pixel_probs = probs[batch_idx, :, x, y]  # Keep as tensor
+                        image_predictions.append((x, y, pixel_probs))
+                    batch_predictions.extend(image_predictions)
+                predictions.append(batch_predictions)
+
+            all_predictions.append(predictions)
+        return all_predictions
 
 
-    def stitch_patches(self, prob_patches, positions, image_shape=(1024, 1024), patch_size=128):
-        num_classes = prob_patches.shape[-1]
-        stitched_images = []
-        # Extract unique image indices from positions
-        image_indices = sorted(set(pos[0] for pos in positions))
-        for img_idx in image_indices:
-            full_image = np.zeros((image_shape[0], image_shape[1], num_classes))
-            # Iterate through all patches and place them if they belong to the current image
-            for i, (curr_idx, y, x) in enumerate(positions):
-                if curr_idx == img_idx:
-                    full_image[y:y+patch_size, x:x+patch_size, :] = prob_patches[i]
-            stitched_images.append(full_image)
-        return [torch.tensor(img) for img in stitched_images]
+    def reconstruct_from_patches(self, all_predictions, original_size=(1024, 1024), patch_size=128):
+        """
+        Reconstructs a full image from patches with probability lists.
 
+        Args:
+            predictions (list): A list of lists of lists of tuples. The outer list corresponds to images,
+                                the middle list corresponds to batches, and the inner list contains tuples
+                                of (x-coordinate, y-coordinate, probability list).
+            original_size (tuple): The size of the original image (height, width). Default is (1024, 1024).
+            patch_size (int): The size of the patches. Default is 128.
+
+        Returns:
+            list[torch.Tensor]: A list of 3D tensors representing the reconstructed images with shape (1024, 1024, 5).
+                        Each pixel contains a probability distribution over the 5 classes.
+        """
+        # Initialize an empty list to hold the reconstructed images
+        all_images = []
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        
+        for predictions in all_predictions:
+            # Initialize tensor instead of numpy array
+            full_img = torch.zeros((original_size[0], original_size[1], 5), device=device)
+
+            # Iterate through the images
+            for image_idx, image_predictions in enumerate(predictions):
+                # Iterate through the batches
+                for batch_idx, batch_patches in enumerate(image_predictions):
+                    # Iterate through the patches and place them in the full image
+                    for patch_data in batch_patches:
+                        x, y, probs = patch_data  # Unpack the tuple
+
+                        # Calculate the patch indices
+                        patch_x_idx = (image_idx * len(image_predictions) + batch_idx) // (original_size[0] // patch_size)
+                        patch_y_idx = (image_idx * len(image_predictions) + batch_idx) % (original_size[1] // patch_size)
+
+                        # Calculate the actual pixel coordinates in the full image
+                        pixel_x = x + patch_x_idx * patch_size
+                        pixel_y = y + patch_y_idx * patch_size
+
+                        # Convert probs to tensor if it's not already
+                        probs_tensor = torch.tensor(probs, device=device) if not isinstance(probs, torch.Tensor) else probs
+                        # Place the probability tensor into the corresponding pixel in the full image
+                        full_img[pixel_x, pixel_y, :] = probs_tensor
+            all_images.append(full_img)
+        return all_images
 
 
     
     def post_process_torch(self, outputs, gamma=0.5):
         all_images = []
-        for img in outputs:  # Each img is a tensor of shape (1024, 1024, 5)
-            # Pad the image to handle borders
-            padded = torch.nn.functional.pad(img, (0, 0, 1, 1, 1, 1))  # Pad H and W by 1
+        for output in outputs:
+            empty_img = torch.zeros((1024, 1024, 5), device=self.device)
             
-            # Compute contributions from 4-directional neighbors
-            top = padded[:-2, 1:-1, :]    # Shape: (1024, 1024, 5)
-            bottom = padded[2:, 1:-1, :]
-            left = padded[1:-1, :-2, :]
-            right = padded[1:-1, 2:, :]
+            # Convert outputs to tensor once
+            coords = torch.tensor([[x,y] for x,y,_ in outputs], device=self.device)
+            probs = torch.tensor([p for _,_,p in outputs], device=self.device)
             
-            # Combine neighbor contributions and add to original probabilities
-            neighbors = gamma * (top + bottom + left + right)
-            combined_probs = img + neighbors
+            # Batch assignment
+            for coord, prob in zip(coords, probs):
+                empty_img[coord[0]:coord[0]+64, coord[1]:coord[1]+64] += prob
             
-            # Get final predictions
-            class_predictions = torch.argmax(combined_probs, dim=2)
-            all_images.append(class_predictions)
-        
-        return all_images  # List of (1024, 1024) tensors with class indices
+            padded = torch.nn.functional.pad(empty_img, (0,0,1,1,1,1))
+            neighbors = gamma * (padded[:-2, 1:-1] + padded[2:, 1:-1] + 
+                                padded[1:-1, :-2] + padded[1:-1, 2:])
+            
+            all_images.append(torch.argmax(empty_img + neighbors, dim=2))
+        return all_images
     
     def converter(self, tensors):
         """
@@ -120,13 +182,13 @@ class PostProcessing:
         
         Args:
             tensors: List of tensors or single tensor. Each tensor should be (1024, 1024) 
-                    containing class labels 0-4 (either numpy array or torch.Tensor)
+                    containing class labels 0-4
         
         Returns:
             list[dict]: List of dictionaries, one per image, where each dictionary
                     contains polygons for each class {0: [...], 1: [...], ...}
         """
-        # Handle single tensor case and convert to numpy
+        # Handle single tensor case
         if isinstance(tensors, (np.ndarray, torch.Tensor)):
             tensors = [tensors]
         
@@ -134,51 +196,25 @@ class PostProcessing:
         
         for idx, tensor in enumerate(tensors):
             print("Converting tensor to polygons for image", idx)
+            # Dictionary to store polygons for current image
             image_polygons = {}
             
-            # Convert to numpy and ensure proper 2D format
-            if isinstance(tensor, torch.Tensor):
-                # Handle both CPU and GPU tensors
-                tensor_np = tensor.cpu().detach().numpy().squeeze().astype(np.uint8)
-                print(tensor_np.shape)
-            else:
-                tensor_np = tensor.squeeze().astype(np.uint8)
-            
-            # Critical validation
-            if tensor_np.ndim != 2:
-                raise ValueError(f"Input tensor must be 2D after squeezing. Got {tensor_np.shape}")
-            
-            for class_id in range(5):
-                # Create binary mask
-                mask = (tensor_np == class_id).astype(np.uint8)
+            for val in range(5):  # Iterate over unique values (0-4)
+                mask = (tensor == val).astype(np.uint8)  # Create binary mask for the value
                 
-                # Verify OpenCV requirements
-                if not isinstance(mask, np.ndarray):
-                    raise TypeError(f"Mask must be numpy array, got {type(mask)}")
-                if mask.dtype != np.uint8:
-                    mask = mask.astype(np.uint8)
+                # Find contours (polygons) of connected components
+                contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
                 
-                # Find contours
-                contours, _ = cv2.findContours(
-                    mask, 
-                    cv2.RETR_EXTERNAL, 
-                    cv2.CHAIN_APPROX_SIMPLE
-                )
-                
-                # Convert and filter contours
-                image_polygons[class_id] = [
-                    contour.squeeze().tolist() 
-                    for contour in contours 
-                    if contour.shape[0] >= 3  # Minimum 3 points for polygon
-                ]
+                # Convert contours to a list of polygons
+                image_polygons[val] = [c.reshape(-1, 2).tolist() for c in contours]
             
             all_image_polygons.append(image_polygons)
         
         return all_image_polygons
 
     def post_process(self, gamma=0.5):
-        predictions = self.predict_probs(self.model, self.test_dataloader)
-        reconstructed_images = self.stitch_patches(predictions)
+        predictions = self.predict_probs()
+        reconstructed_images = self.reconstruct_from_patches(predictions)
         assigned_labels = self.post_process_torch(reconstructed_images, gamma=gamma)
         polygons = self.converter(assigned_labels)
         return polygons
