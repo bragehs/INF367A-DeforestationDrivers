@@ -20,7 +20,7 @@ class PreProcessing:
     'mining' : ('blue', (0, 0, 255), 3), 
     'logging' : ('yellow', (255, 255, 0), 4) 
 }   
-    def __init__(self, train_set=True):
+    def __init__(self, train_set=True, satlas = True):
         #laste inn annotations fra JSON og bilder fra fil
         self.base_dir = os.getcwd()
         self.parent_dir = os.path.split(self.base_dir)[0]
@@ -30,7 +30,8 @@ class PreProcessing:
         with open('train_annotations.json', 'r') as file:
             self.train_annotations = json.load(file)
 
-        self.train_set=train_set
+        self.train_set=train_set #True for train, False for test
+        self.satlas = satlas #True for satlas, False for other model (for normalization and bands)
         self.polygons = {}
         self.train_images = [f for f in os.listdir(self.TRAIN_IMAGES_PATH) if f.endswith('.tif')]
         self.test_images = [f for f in os.listdir(self.TEST_IMAGES_PATH) if f.endswith('.tif')]
@@ -170,7 +171,6 @@ class PreProcessing:
         
         return filled_data
     
-        return filled_data
     def visualize_nan_filling(self, start=0, n=1, band_start=1, band_n=12, method= "open_cv_inpaint_telea"):
         """Visualize NaN filling results for a specific band."""
         for idx in range(start, n):
@@ -315,7 +315,11 @@ class PreProcessing:
             del tci_batch
             del bands_batch
             
-        return output      
+        return output
+
+    def normalize_by_10000(self, data):
+        """Normalize Sentinel-2 imagery by dividing by 10000"""
+        return data / 10000.0      
 
     def preprocess(self, method='open_cv_inpaint_telea'):
         """Process TIF file and save result"""
@@ -328,9 +332,12 @@ class PreProcessing:
             filled_data = self.fill_nans(data, method=method)
             self.prepared_data[idx] = filled_data
 
-        bands = [1, 2, 3, 4, 5, 6, 7, 10, 11]
-        self.prepared_data = self.prepared_data[:, bands]
-        self.prepared_data = self.normalize_sentinel2(self.prepared_data[:, 0:3], self.prepared_data[:, 3:])
+        if self.satlas:
+            bands = [1, 2, 3, 4, 5, 6, 7, 10, 11]
+            self.prepared_data = self.prepared_data[:, bands]
+            self.prepared_data = self.normalize_sentinel2(self.prepared_data[:, 0:3], self.prepared_data[:, 3:])
+        else:
+            self.prepared_data = self.normalize_by_10000(self.prepared_data)
         if self.train_set:
             self.label_pixels()
             print("NaN values filled and pixels labeled")
