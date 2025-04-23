@@ -31,16 +31,17 @@ class PreProcessing:
     'logging' : ('yellow', (255, 255, 0), 4) 
 }   
     def __init__(self, train_set=True, test_set=False, satlas = True, img_labels = False):
-        #laste inn annotations fra JSON og bilder fra fil
+
         self.base_dir = os.getcwd()
         self.parent_dir = os.path.split(self.base_dir)[0]
         self.TRAIN_IMAGES_PATH=self.parent_dir+"/train_images"
         self.TEST_IMAGES_PATH=self.parent_dir+"/evaluation_images"
         self.img_labels_images_path =self.parent_dir+"/train-tif-v2"
-        # plot and save RGB with annotation
-        self.train_annotations = {}  # Initialize as empty dictionary
+
+
+        self.train_annotations = {}
         self.polygons = {}
-        # Only load train_annotations if train_set is True and the file exists
+
         if train_set and os.path.exists('train_annotations.json'):
             with open('train_annotations.json', 'r') as file:
                 self.train_annotations = json.load(file)
