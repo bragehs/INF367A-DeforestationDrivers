@@ -40,9 +40,10 @@ class PreProcessing:
         self.img_labels_images_path =self.parent_dir+"/train-tif-v2"
 
         self.train_annotations = {}  # Initialize as empty dictionary
+        self.polygons = {}
 
-        # Only load train_annotations if train_set is True and the file exists
-        if train_set and os.path.exists('train_annotations.json'):
+        #train_annotations does not have to be in parent dir as it is a small file
+        if train_set and os.path.exists('train_annotations.json'): 
             with open('train_annotations.json', 'r') as file:
                 self.train_annotations = json.load(file)
             for image in self.train_annotations["images"]:
