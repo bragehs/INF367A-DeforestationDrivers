@@ -30,18 +30,18 @@ class PreProcessing:
     'mining' : ('blue', (0, 0, 255), 3), 
     'logging' : ('yellow', (255, 255, 0), 4) 
 }   
-    def __init__(self, train_set=True, test_set=False, satlas = True, img_labels = False):
-
+    def __init__(self, train_set=True, satlas = True, img_labels = False):
         self.base_dir = os.getcwd()
         self.parent_dir = os.path.split(self.base_dir)[0]
+
+        #images should be in parent_dir/train_images
         self.TRAIN_IMAGES_PATH=self.parent_dir+"/train_images"
         self.TEST_IMAGES_PATH=self.parent_dir+"/evaluation_images"
         self.img_labels_images_path =self.parent_dir+"/train-tif-v2"
 
+        self.train_annotations = {}  # Initialize as empty dictionary
 
-        self.train_annotations = {}
-        self.polygons = {}
-
+        # Only load train_annotations if train_set is True and the file exists
         if train_set and os.path.exists('train_annotations.json'):
             with open('train_annotations.json', 'r') as file:
                 self.train_annotations = json.load(file)
@@ -52,15 +52,15 @@ class PreProcessing:
                     polys.append((polygons["class"],geom))
                 self.polygons[image["file_name"]]=polys
 
-        self.train_set=train_set #True for train, False for test
-        self.satlas = satlas #True for satlas, False for other model (for normalization and bands)
+        self.train_set=train_set 
+        self.satlas = satlas 
         self.img_labels = img_labels
+        self.polygons = {}
         if train_set:
             self.train_images = [f for f in os.listdir(self.TRAIN_IMAGES_PATH) if f.endswith('.tif')]
-     
         if img_labels:    
             self.img_labels_images = [f for f in os.listdir(self.img_labels_images_path) if f.endswith('.tif')]
-        if test_set:
+        elif not train_set and not img_labels:
             self.test_images = [f for f in os.listdir(self.TEST_IMAGES_PATH) if f.endswith('.tif')]
 
 
@@ -88,8 +88,9 @@ class PreProcessing:
         return { "type": "FeatureCollection", "features": features }
     
     def visualize_in_RGB(self, n=10, start=0, annotation=True, train = True):
-        #Velg train_image_num for alle bilder
-        #n=train_image_num
+        """
+        Visualizes RGB images with optional annotations.
+        """
         outfolder = 'rgb_annotation'  
         for index_for_image in range(start, n):
             filename = os.path.join(outfolder, f'rgb_with_annotation_{index_for_image}.png')
@@ -106,8 +107,6 @@ class PreProcessing:
 
             id_to_annotation = {item['file_name']: item for item in annotation_data}
             annotation_data = id_to_annotation[ f'train_{index_for_image}.tif']['annotations']
-
-            #annotation_data = train_annotations['images'][index_for_train_image]['annotations']
             
             # Convert to GeoJSON
             geojson_data = self.convert_to_geojson(annotation_data)
@@ -118,10 +117,7 @@ class PreProcessing:
                 b2 = src.read(2)
                 b3 = src.read(3)
                 b4 = src.read(4)
-                #Checking that all bands have the same shape (1024,1024)
-                #for band in range(1,13):
-                #    print(band, src.read(band).shape)
-                # Stack bands to create a 3D array (height, width, channels)
+
                 rgb_image = np.dstack((b4, b3, b2))
 
                 rgb_image = np.nan_to_num(rgb_image) # Replace NaN and inf with 0
@@ -135,7 +131,6 @@ class PreProcessing:
                 ax.imshow(rgb_image)
                 
                 for idx in range(len(gdf)):
-                    # print(gdf.iloc[idx]['class'])
                     if annotation:
                         gdf.iloc[[idx]].boundary.plot(ax=ax, color=PreProcessing.annotation_color_allocation[gdf.iloc[idx]['class']][0])
 
@@ -149,9 +144,6 @@ class PreProcessing:
                 # gdf.boundary.plot(ax=ax, color='red')
                 plt.title(f'idx {index_for_image}: RGB Image')
 
-                #Om man vil lagre
-                #plt.savefig(filename)
-                #plt.show()
 
     def visualize_rgb_by_class(self, class_label, max_images=10, show_overlay=False):
         """
@@ -228,12 +220,9 @@ class PreProcessing:
             # Plot RGB image
             axes[i].imshow(rgb_img)
             
-            # Add overlay if requested
             if show_overlay:
-                # Create a color overlay for the class
                 overlay = np.zeros_like(rgb_img)
-                overlay[mask] = [1, 0, 0]  # Red overlay
-                # Add overlay with transparency
+                overlay[mask] = [1, 0, 0]  
                 axes[i].imshow(overlay, alpha=0.3)
             
             axes[i].set_title(f"Image: {key}")
@@ -302,7 +291,7 @@ class PreProcessing:
                     original = src.read(band)
     
                 # Process the band
-                filled = self.fill_nans(original[np.newaxis, ...], method=method)[0]  # Add band dim
+                filled = self.fill_nans(original[np.newaxis, ...], method=method)[0]
                 
                 fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
                 im1 = ax1.imshow(original, cmap='viridis')
@@ -315,11 +304,11 @@ class PreProcessing:
                 
                 plt.suptitle(f'train_{idx}.tif - Band {band}')
                 plt.tight_layout()
-                """ output_png = tif_path.replace('.tif', '_comparison.png')
-                plt.savefig(output_png)
-                plt.show() """
     
     def create_polygons(self, json_file='train_annotations.json'):
+        '''
+        Create polygons from the JSON file.
+        '''
         with open(json_file, 'r') as file:
             input_annotations = json.load(file)
 
@@ -334,6 +323,9 @@ class PreProcessing:
         return polygons
     
     def rasterize(self, json_file='train_annotations.json'):
+        '''
+        Rasterize the polygons from the JSON file. 
+        '''
         with open(json_file, 'r') as file:
             input_annotations = json.load(file)
         shape = (1024, 1024)
@@ -357,6 +349,9 @@ class PreProcessing:
             self.RGB_raster_imgs[f"train_{current_image}.tif"]=mask_2
     
     def visualize_rasterized(self, start=0, n=10, json_file='train_annotations.json'):
+        '''
+        Visualize the rasterized images.
+        '''
         self.rasterize(json_file)
         for i in range(start, n):
             fig, ax = plt.subplots(1, 1, figsize=(12, 8))
@@ -407,9 +402,6 @@ class PreProcessing:
             print(f"No images found with class {class_label}.")
             return
         
-        # The following local import was removed to avoid the UnboundLocalError.
-        import matplotlib.pyplot as plt
-        
         num_images = len(selected_images)
         num_cols = min(3, num_images)
         num_rows = int(np.ceil(num_images / num_cols))
@@ -449,120 +441,7 @@ class PreProcessing:
                     (rgb_array[:, :, 2] == b)
                 label_array[mask] = class_id
                 
-            self.labels[idx] = label_array
-
-    def analyze_class_distribution(self):
-        """
-        Analyzes and visualizes the distribution of classes in the dataset.
-        Shows both frequency (how many images contain each class) and
-        total area (pixel count) for each class.
-        """
-        # Always ensure we have rasterized masks
-        if not hasattr(self, "RGB_raster_imgs") or not self.RGB_raster_imgs:
-            print("Generating rasterized masks...")
-            self.rasterize()
-        
-        # Initialize counters
-        class_counts = {name: 0 for name in self.annotation_color_allocation.keys()}
-        class_areas = {name: 0 for name in self.annotation_color_allocation.keys()}
-        total_images = len(self.RGB_raster_imgs)
-        
-        print(f"Analyzing class distribution across {total_images} images...")
-        
-        # Count occurrences and pixels for each class
-        for img_name, rgb_array in self.RGB_raster_imgs.items():
-            classes_in_image = set()
-            
-            # Check each class
-            for class_name, (_, rgb_color, class_id) in self.annotation_color_allocation.items():
-                # Create mask for this class
-                mask = ((rgb_array[:, :, 0] == rgb_color[0]) & 
-                        (rgb_array[:, :, 1] == rgb_color[1]) & 
-                        (rgb_array[:, :, 2] == rgb_color[2]))
-                
-                # Count pixels for this class
-                pixel_count = np.sum(mask)
-                class_areas[class_name] += pixel_count
-                
-                # If class exists in this image, increment count
-                if pixel_count > 0:
-                    classes_in_image.add(class_name)
-                    class_counts[class_name] += 1
-            
-        # Create DataFrames for better visualization
-        import pandas as pd
-        
-        # Frequency DataFrame
-        freq_data = {
-            'Class': list(class_counts.keys()),
-            'Images': list(class_counts.values()),
-            'Percentage': [count/total_images*100 for count in class_counts.values()]
-        }
-        freq_df = pd.DataFrame(freq_data)
-        freq_df = freq_df.sort_values(by='Images', ascending=False)
-        
-        # Area DataFrame
-        total_pixels = sum(class_areas.values())
-        area_data = {
-            'Class': list(class_areas.keys()),
-            'Pixels': list(class_areas.values()),
-            'Percentage': [area/total_pixels*100 for area in class_areas.values()]
-        }
-        area_df = pd.DataFrame(area_data)
-        area_df = area_df.sort_values(by='Pixels', ascending=False)
-        
-        # Display results
-        print("\n=== Class Distribution by Image Frequency ===")
-        print(f"Total images analyzed: {total_images}")
-        print(freq_df.to_string(index=False))
-        
-        print("\n=== Class Distribution by Area (Pixels) ===")
-        print(f"Total pixels analyzed: {total_pixels}")
-        print(area_df.to_string(index=False))
-        
-        # Create visualizations
-        import matplotlib.pyplot as plt
-        
-        # Set up the figure with two subplots
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
-        
-        # Plot frequency distribution (excluding background for clarity if needed)
-        non_bg_freq = freq_df[freq_df['Class'] != 'background'] if 'background' in freq_df['Class'].values else freq_df
-        ax1.bar(non_bg_freq['Class'], non_bg_freq['Images'], color='skyblue')
-        ax1.set_title('Class Distribution by Image Frequency')
-        ax1.set_xlabel('Class')
-        ax1.set_ylabel('Number of Images')
-        for i, v in enumerate(non_bg_freq['Images']):
-            ax1.text(i, v + 0.5, f"{v} ({non_bg_freq['Percentage'].iloc[i]:.1f}%)", 
-                    ha='center', va='bottom', fontweight='bold')
-        ax1.grid(axis='y', linestyle='--', alpha=0.7)
-        
-        # Plot area distribution (pie chart)
-        non_bg_area = area_df[area_df['Class'] != 'background'] if 'background' in area_df['Class'].values else area_df
-        colors = ['#ff9999', '#66b3ff', '#99ff99', '#ffcc99', '#c2c2f0']
-        ax2.pie(non_bg_area['Percentage'], labels=non_bg_area['Class'], autopct='%1.1f%%',
-                startangle=90, shadow=True, colors=colors)
-        ax2.axis('equal')  # Equal aspect ratio ensures that pie is drawn as a circle
-        ax2.set_title('Class Distribution by Area')
-        
-        plt.tight_layout()
-        plt.show()
-        
-        # Calculate class balance statistics
-        if len(non_bg_area) > 1:  # Only if we have multiple classes
-            mean_area_pct = non_bg_area['Percentage'].mean()
-            std_area_pct = non_bg_area['Percentage'].std()
-            max_min_ratio = non_bg_area['Percentage'].max() / non_bg_area['Percentage'].min()
-            
-            print("\n=== Class Balance Statistics (excluding background) ===")
-            print(f"Mean class area: {mean_area_pct:.2f}%")
-            print(f"Standard deviation: {std_area_pct:.2f}%")
-            print(f"Max/Min ratio: {max_min_ratio:.2f}")
-            
-            if max_min_ratio > 10:
-                print("⚠️ Warning: Dataset shows significant class imbalance (max/min ratio > 10)")
-                
-        return freq_df, area_df    
+            self.labels[idx] = label_array    
     
     def normalize_sentinel2(self, tci_rgb, bands):
         # tci_rgb: shape (height, width, 3), 8-bit data in [0..255]
@@ -638,7 +517,7 @@ class PreProcessing:
 
         if self.satlas:
             bands = [1, 2, 3, 4, 5, 6, 7, 10, 11]
-            self.prepared_data = self.prepared_data[:, bands]
+            self.prepared_data = self.prepared_data[:, bands] #satlas model requires bands 1,2,3,4,5,6,7,10,11 or RGB
             self.prepared_data = self.normalize_sentinel2(
                     self.prepared_data[:, :3, :, :],
                     self.prepared_data[:, 3:, :, :]
@@ -668,10 +547,6 @@ class PreProcessing:
     def load_preprocessed_data(self):
         """Load preprocessed images and labels from disk"""
         self.prepared_data = np.load(self.TRAIN_IMAGES_PATH + '/prepared_data.npy')
-        #self.labels = np.stack([
-        #    np.load(self.TRAIN_IMAGES_PATH + f'/train_masks/train_{i}.npy')
-        #    for i in range(176)
-       # ])
         self.labels = np.load(self.TRAIN_IMAGES_PATH + '/labels.npy')
         print(f'Loaded preprocessed data from {self.base_dir}')
         return self.prepared_data, self.labels
@@ -709,7 +584,7 @@ def plot_histograms(data, title_prefix, bins=50):
 def histogram_match_images(source, reference):
     """
     Perform histogram matching for each channel (band) in 'source'
-    so that it matches the distribution of 'reference'.
+    so that it matches the pixel distribution of 'reference'.
 
     Parameters:
       source: np.array of shape (N, C, H, W)
@@ -720,12 +595,6 @@ def histogram_match_images(source, reference):
     # We'll flatten all images across the batch dimension, then match histograms channel by channel.
     C = source.shape[1]
 
-    # Convert source and reference to (C, H_total, W) shape for easier matching
-    # Flatten the N dimension into a single big batch. For reference, do the same.
-    source_reshaped = source.reshape(-1, *source.shape[2:])  # shape: (N*C, H, W)?
-    # Actually, we want (N*C, H, W) -> but we should keep channel separate
-    # Let's do it channel by channel.
-
     matched = np.zeros_like(source)
 
     for c in range(C):
@@ -733,19 +602,9 @@ def histogram_match_images(source, reference):
         src_c = source[:, c, :, :].reshape(-1, source.shape[2], source.shape[3])
         ref_c = reference[:, c, :, :].reshape(-1, reference.shape[2], reference.shape[3])
 
-        # For histogram matching, pick representative samples.
-        # Typically we might do it across the entire dataset or a subset.
-        # We'll just stack them all up into a single big 2D image for both source and reference.
         src_c_flat = src_c.reshape(-1)
         ref_c_flat = ref_c.reshape(-1)
 
-        # match_histograms operates on 2D images.
-        # We'll reshape them back to 2D (height x width) if we want a single big "image".
-        # Instead, we can just treat them as 1D by adding shape (N, 1).
-
-        # But match_histograms can also accept multichannel images.
-        # We'll do it with the 1D approach for simplicity.
-        # Create a dummy 2D image: (H, W=1) so that match_histograms is happy
         src_c_dummy = src_c_flat.reshape(-1, 1)
         ref_c_dummy = ref_c_flat.reshape(-1, 1)
 
@@ -762,7 +621,7 @@ def histogram_match_images(source, reference):
 
 def create_bright_reference(shape=(10, 3, 64, 64), mean=0.2, std=0.05):
     """
-    Create a synthetic bright reference distribution.
+    Create a synthetic bright reference distribution, which we will use as reference for histogram matching.
 
     Parameters:
       shape: Shape of the reference array (N, C, H, W)
@@ -795,9 +654,6 @@ def visualize_images(image_data, num_images=5, cmap='viridis'):
     # Reshape and transpose the image for display
     image = np.transpose(image_data[i], (1, 2, 0))
 
-    # Normalize the image data to the range of 0-1
-    #image = (image - image.min()) / (image.max() - image.min())
-
     ax.imshow(image, cmap=cmap)  # Use the specified colormap if provided
     ax.axis('off')  # Turn off axis labels
 
@@ -812,14 +668,14 @@ def visualize_images(image_data, num_images=5, cmap='viridis'):
 
 class SatelliteSegmentationDataset(Dataset):
     """
-    Dataset class for satellite image segmentation with smart patch extraction
+    Dataset class for satellite image segmentation with patch extraction
     and augmentation strategies.
     """
 
     def __init__(
         self,
-        images: np.ndarray,  # Shape: (N, C, H, W)
-        labels: np.ndarray,  # Shape: (N, H, W)
+        images: np.ndarray, 
+        labels: np.ndarray, 
         patch_size: int = 256,
         patch_stride: Optional[int] = 128,
         min_valid_pixels: float = 0.05,
@@ -834,7 +690,6 @@ class SatelliteSegmentationDataset(Dataset):
         self.augment = augment
         self.max_patches_per_image = max_patches_per_image
 
-        # Initialize augmentation pipeline
         if self.augment:
           self.transform = A.Compose([
                   A.OneOf([
@@ -846,14 +701,14 @@ class SatelliteSegmentationDataset(Dataset):
                       A.ColorJitter(brightness=0.5, contrast=0.5, saturation=0.5, hue=0.25, p=0.5),
                       A.ShiftScaleRotate(shift_limit=0.1, scale_limit=0.1, rotate_limit=10, p=0.5),
                       A.RandomGamma(gamma_limit=(80, 120), p=0.5),
-                  ], p=1),  # Apply one of the brightness/contrast/gamma augmentations
+                  ], p=1),  # Apply one of the brightness/jitter/gamma augmentations
         ])
         self.patches = self._create_patches()
 
 
     def _create_patches(self) -> List[Tuple[np.ndarray, np.ndarray]]:
         """
-        Create patches from images with smart extraction strategy.
+        Create patches from larger images.
         Returns list of (image_patch, label_patch) tuples.
         """
         patches = []
@@ -899,7 +754,7 @@ class SatelliteSegmentationDataset(Dataset):
         img_patch, label_patch = self.patches[idx]
 
         if self.augment:
-            # Transpose image to (H, W, C) for albumentation
+            # Transpose image to (H, W, C) for albumentation (needed for ColorJitter)
             img_patch = np.transpose(img_patch, (1, 2, 0))
             #pixel values for augmentation
             img_patch = (img_patch * 255).astype(np.uint8)
@@ -958,7 +813,6 @@ class TestDataset(Dataset):
         return patches, positions
 
     def __len__(self):
-        # Length is now number of patches Ãƒâ€” number of augmentations
         return len(self.patches) * len(self.transforms)
 
     def __getitem__(self, idx):
@@ -992,7 +846,7 @@ def create_dataloaders(
 
 ) -> Tuple[torch.utils.data.DataLoader, torch.utils.data.DataLoader]:
     """
-    Create train and validation dataloaders with the enhanced dataset.
+    Create train and validation dataloaders with the custom dataset class.
     """
     train_dataset = SatelliteSegmentationDataset(
         images=train_images,
@@ -1031,19 +885,13 @@ class SimpleHead(nn.Module):
     def __init__(self, fpn_channels, num_categories=5):
         """
         Args:
-            task: The task type (e.g., "segment").
-            backbone_channels: List of tuples; e.g., [(None, 128), (None,128), (None,128), (None,128), (None,128)].
-              Here the first element is raw_features[0] (from FPN top) and so on.
+            fpn_channels: List of tuples which denotes spatial dimension and feature channels for each FPN output
             num_categories: Total number of output channels (background + 4 foreground classes).
-            class_weights: Optional class weights for cross entropy.
-            lambda_bg: Weight for the background loss.
-            lambda_roi: Weight for the ROI loss component.
         """
         super(SimpleHead, self).__init__()
-        self.num_outputs = num_categories  # e.g., 5 outputs
-        # ---- Decoder head (segmentation) using raw_features[0] ----
-        # Use the first element's channel count.
-        use_channels = fpn_channels[0][1]  # e.g., 128 from shape [B, 128, 256, 256]
+        self.num_outputs = num_categories
+        #this is the same implementation as in the original satlaspretrain code
+        use_channels = fpn_channels[0][1]
         num_layers = 2
         layers = []
         for _ in range(num_layers - 1):
@@ -1060,24 +908,18 @@ class SimpleHead(nn.Module):
         """
         Args:
             image_list: (Not used here.)
-            raw_features: A list of 5 feature tensors from your backbone, with shapes:
-                [B, 128, 256, 256] (for decoder),
-                [B, 128, 64, 64] (for classification/Grad-CAM),
-                [B, 128, 32, 32], [B, 128, 16, 16], [B, 128, 8, 8]
-            targets: Ground truth segmentation mask (if available) of shape [B, H, W].
+            raw_features: A list of 5 feature tensors from final upsampling
         Returns:
             raw_outputs: Segmentation logits from decoder, shape [B, 5, H, W].
-            cls_logits: Classification logits from classifier head, shape [B, 5].
         """
-        # Segmentation Decoder uses raw_features[0]
-        x_dec = self.layers(raw_features[0])      # [B, 128, 256, 256]
-        raw_outputs = self.final_conv(x_dec)        # [B, 5, 256, 256]
+        x_dec = self.layers(raw_features[0])
+        raw_outputs = self.final_conv(x_dec) 
 
         return raw_outputs, None
 
 def compute_f1_score(pred_mask: np.ndarray, truth_mask: np.ndarray) -> float:
     """
-    Compute pixel-based F1 (Dice) for two binary masks.
+    Compute pixel-based F1 for two binary masks.
     """
     tp = ((pred_mask > 0) & (truth_mask > 0)).sum()
     fp = ((pred_mask > 0) & (truth_mask == 0)).sum()
@@ -1099,11 +941,11 @@ def performance_df_bhw(
         class_names: list of class names, length = C
         min_area:    minimum pixel area to keep a class mask
     Returns:
-        DataFrame: per-image (rows) Ãƒâ€” per-class (cols) F1, plus 'all_classes' col and 'all_images' row.
+        DataFrame: per-image (rows), per-class (cols) F1, plus 'all_classes' col and 'all_images' row.
     """
     B, H, W = pred_labels.shape
     C = len(class_names)
-    # Build rowÃ¢â‚¬â€˜dicts
+
     rows = []
     for i in range(B):
         row = {}
@@ -1133,27 +975,21 @@ def performance_df_bhw(
 class CustomLoss(nn.Module):
     def __init__(self, delta=1.0, num_classes=5):
         super(CustomLoss, self).__init__()
-        # Here, num_classes is still 5 (0=background, 1-4 foreground),
-        # but since your model predicts 4 channels (foreground),
-        # you'll convert targets accordingly.
         self.num_classes = num_classes
         self.robust_loss = RobustLoss(delta=delta, num_classes=num_classes)
         self.binary_focal = smp.losses.FocalLoss(mode='binary')
 
     def forward(self, logits, targets):
-        # Convert multiclass targets (shape [B, H, W] with values 0-4) into a one-hot
-        # representation for the foreground (shape [B, 4, H, W]). Background will be all zeros.
-
-        bg_target = (targets == 0).float()  # Background is 1, Foreground is 0
+        bg_target = (targets == 0).float()  # Background/foreground mask
 
         # Background logits
         bg_logits_dec = logits[:, 0, :, :]  # Logits for the background class
 
-        # Calculate BCE loss for background/foreground
-        decoder_loss_bg = self.binary_focal(bg_logits_dec.unsqueeze(1), bg_target.unsqueeze(1))  # unsqueeze for BCE
+        # Calculate binary focal loss for background/foreground
+        decoder_loss_bg = self.binary_focal(bg_logits_dec.unsqueeze(1), bg_target.unsqueeze(1))
+        # Calculate robust loss for all classes, but background is not perturbed
         decoder_loss_roi = self.robust_loss(logits, targets)
 
-        #decoder_loss = self.ce(logits, targets)
         decoder_loss = (2.0 * decoder_loss_bg) + decoder_loss_roi
 
         return decoder_loss
@@ -1165,7 +1001,7 @@ class RobustLoss(nn.Module):
       Initializes the robust loss with a penalty factor delta.
 
       Args:
-          delta (float): The penalty factor ÃŽâ€ . A positive value reduces the
+          delta (float): The penalty factor. A positive value which reduces the
                           logit of the correct class and boosts those of the incorrect classes.
           num_classes (int): The number of classes in the segmentation task.
       """
@@ -1175,14 +1011,13 @@ class RobustLoss(nn.Module):
 
   def forward(self, logits, targets):
       # Convert targets to one-hot encoding
-      targets_onehot = F.one_hot(targets, num_classes=self.num_classes)  # (B, H, W, C)
-      targets_onehot = targets_onehot.permute(0, 3, 1, 2).float()  # (B, C, H, W)
+      targets_onehot = F.one_hot(targets, num_classes=self.num_classes) 
+      targets_onehot = targets_onehot.permute(0, 3, 1, 2).float()
 
-      # Create a mask: 0 for background channel, 1 for foreground channels.
+      # Create a mask: 0 for background channel, 1 for foreground channels in order to not perturb background
       mask = torch.ones_like(targets_onehot)
-      mask[:, 0, :, :] = 0  # Do not perturb background
+      mask[:, 0, :, :] = 0 
 
-      # Perturb only non-background logits:
       perturbed_logits = logits + self.delta * mask * (1 - 2 * targets_onehot)
 
       perturbed_logits = perturbed_logits.contiguous()
@@ -1219,8 +1054,8 @@ def predict_probs(model, test_dataloader, device='cpu'):
     num_patches = len(test_dataloader.dataset.patches)
 
     # Initialize output numpy array with correct shape
-    patch_size = test_dataloader.dataset.patch_size  # Assuming patch size is constant
-    num_classes = 5  # Assuming 5 output classes
+    patch_size = test_dataloader.dataset.patch_size
+    num_classes = 5 
     all_probs = np.zeros((num_patches, patch_size, patch_size, num_classes), dtype=np.float32)
 
     with torch.no_grad():
@@ -1228,7 +1063,6 @@ def predict_probs(model, test_dataloader, device='cpu'):
             data = data.to(device)
             output = model(data)[0]
             probs = torch.nn.functional.softmax(output, dim=1)
-            # Permute to (batch_size, patch_size, patch_size, num_classes)
             batch_probs = probs.permute(0, 2, 3, 1).cpu().numpy()
 
             # Process each sample in the batch
@@ -1518,7 +1352,7 @@ def write_json(polygons, filename: str):
     numper_2_class = {1: "plantation", 2: "grassland_shrubland", 3: "mining", 4: "logging"}
 
     # Construct the full file path within Google Drive
-    save_path = os.path.join('/content/drive/MyDrive/my_models', filename + '.json')  # Modify if you want to save it somewhere else in Drive
+    save_path = os.path.join('/content/drive/MyDrive/inf367/', filename + '.json')  # Modify if you want to save it somewhere else in Drive
 
     # Create necessary directories if they don't exist
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
@@ -1539,3 +1373,5 @@ def write_json(polygons, filename: str):
                     curr["annotations"].append({"class": numper_2_class[j], "segmentation": listed_polygons})
             images_overview["images"].append(curr)
         file.write(json.dumps(images_overview, ensure_ascii=False, indent=4))
+
+        
