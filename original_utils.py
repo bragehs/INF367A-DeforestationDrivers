@@ -5,7 +5,6 @@ import geopandas as gpd
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 import numpy as np
-import tifffile as tiff
 import cv2
 from PIL import Image, ImageDraw
 from natsort import natsorted
@@ -16,10 +15,11 @@ import torch
 from typing import List, Tuple, Optional
 import torch.nn as nn
 import torch.nn.functional as F
-import itertools
 import segmentation_models_pytorch as smp
 from tqdm import tqdm
 from skimage.exposure import match_histograms
+from skimage.morphology import remove_small_objects
+from scipy import ndimage
 
 class PreProcessing:
     # structure: {class name: (color, RGB, class label)
@@ -43,7 +43,7 @@ class PreProcessing:
         self.polygons = {}
 
         #train_annotations does not have to be in parent dir as it is a small file
-        if train_set and os.path.exists('train_annotations.json'): 
+        if os.path.exists('train_annotations.json'): 
             with open('train_annotations.json', 'r') as file:
                 self.train_annotations = json.load(file)
             for image in self.train_annotations["images"]:
@@ -943,6 +943,8 @@ def performance_df_bhw(
         min_area:    minimum pixel area to keep a class mask
     Returns:
         DataFrame: per-image (rows), per-class (cols) F1, plus 'all_classes' col and 'all_images' row.
+        calling performance_df_bhw(pred_labels, gt_labels).loc['all_images','all_classes'] 
+        will return average F1-score for entire batch.
     """
     B, H, W = pred_labels.shape
     C = len(class_names)
@@ -1138,13 +1140,9 @@ def post_process_torch(prob_maps,
                       min_size=100,
                       border_margin=10,
                       apply_smoothing=True,
-                      remove_small_objects=True,
+                      _remove_small_objects=True,
                       fill_enclosed=False,
                       smooth_boundaries=True,
-                      connect_logging=True,
-                      max_logging_distance=30,
-                      logging_thickness=3,
-                      min_logging_size=100
                       ):
     """
     Post-process segmentation maps with optional processing steps.
@@ -1158,14 +1156,9 @@ def post_process_torch(prob_maps,
         remove_small_objects: Remove small connected components
         fill_enclosed: Fill enclosed background regions
         smooth_boundaries: Apply boundary smoothing
+    Returns:
+        List of processed segmentation maps, each [1024, 1024]
     """
-    import torch
-    import torch.nn.functional as F
-    from skimage.morphology import remove_small_objects
-    import numpy as np
-    from scipy import ndimage
-    from skimage.draw import line
-
     processed_maps = []
 
     # Create 2D Gaussian kernel if needed
@@ -1213,52 +1206,8 @@ def post_process_torch(prob_maps,
                     if len(np.unique(surrounding_classes)) == 1 and surrounding_classes[0] != 0:
                         pred_np[component] = surrounding_classes[0]
 
-
-        # Step 3: Connect logging pixels
-        if connect_logging:
-            logging_mask = (pred_np == 4)
-            if logging_mask.any():
-                # Get probability map for logging
-                logging_probs = smoothed_probs[..., 4].cpu().numpy()
-
-                # Create initial mask
-                enhanced_mask = logging_mask.copy()
-                prob_threshold = 0.15
-                high_prob_logging = (logging_probs > prob_threshold) & (pred_np == 0)
-                enhanced_mask |= high_prob_logging
-
-                # Thin directional connections
-                horizontal = ndimage.binary_dilation(
-                    enhanced_mask,
-                    structure=np.ones((2, 5))  # Thinner horizontal structure
-                )
-
-                vertical = ndimage.binary_dilation(
-                    enhanced_mask,
-                    structure=np.ones((5, 2))  # Thinner vertical structure
-                )
-
-                # Combine and thin
-                connected = horizontal | vertical
-
-                # Skeletonize to get minimum thickness
-                from skimage.morphology import skeletonize
-                connected = skeletonize(connected)
-
-                # Optional: Very slight dilation if needed
-                if logging_thickness > 0:
-                    connected = ndimage.binary_dilation(
-                        connected,
-                        structure=np.ones((2, 2)),
-                        iterations=logging_thickness
-                    )
-
-                # Only modify background
-                new_logging = connected & (pred_np == 0)
-                pred_np[new_logging] = 4
-
         # Step 4: Optional small object removal
-        if remove_small_objects:
+        if _remove_small_objects:
             for class_idx in range(1, smoothed_probs.shape[-1]):
                 class_mask = (pred_np == class_idx)
                 if class_mask.any():
@@ -1375,4 +1324,49 @@ def write_json(polygons, filename: str):
             images_overview["images"].append(curr)
         file.write(json.dumps(images_overview, ensure_ascii=False, indent=4))
 
-        
+
+def display_labels(post_processed, image=0):
+    """
+    Function to display the predicted labels for an image.
+
+    Args:
+        post_processed: Predictions array/tensor
+        image: Index of image to display (default=0)
+    """
+    # Ensure we're working with numpy array
+    if isinstance(post_processed[image], torch.Tensor):
+        prediction = post_processed[image].cpu().detach().numpy()
+    else:
+        prediction = post_processed[image]
+
+    # Color mapping for classes
+    color_map = {
+        0: [0, 0, 0],      # background: black
+        1: [255, 0, 0],    # plantation: red
+        2: [0, 255, 0],    # grassland_shrubland: green
+        3: [0, 0, 255],    # mining: blue
+        4: [255, 0, 255]   # logging: purple
+    }
+
+    # Create RGB image
+    height, width = prediction.shape
+    rgb_image = np.zeros((height, width, 3), dtype=np.uint8)
+
+    # Vectorized operation for coloring
+    for class_id, color in color_map.items():
+        mask = (prediction == class_id)
+        rgb_image[mask] = color
+
+    # Display with matplotlib
+    plt.figure(figsize=(10, 10))
+    plt.imshow(rgb_image)
+    plt.axis('off')
+
+    # Create legend
+    legend_elements = [plt.Rectangle((0,0),1,1, facecolor=np.array(color)/255)
+                      for color in color_map.values()]
+    legend_labels = ['Background', 'Plantation', 'Grassland/Shrubland', 'Mining', 'Logging']
+    plt.legend(legend_elements, legend_labels, loc='center left', bbox_to_anchor=(1, 0.5))
+
+    plt.tight_layout()
+    plt.show()
