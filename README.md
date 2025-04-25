@@ -1,3 +1,9 @@
+#  SolaFune contest: Identifying Deforestation Drivers
+
+Deforestation is the process of removing large areas of forests in order to make room for some non-forest use. Excessive deforestation has negative impacts for its surroundings, and also contributes to climate change in general. It is a major environmental issue, and in places like the Amazonas, we have seen this excessive deforestation take place over many years. This issue has motivated a lot of research, perhaps especially in deep learning. Training neural networks on satellite images can make them understand where deforestation is taking place, and what is replacing it. Satellite imagery is not always easy to understand for humans either, which makes neural networks very useful. Our goal in this project was to create a neural network which can provide insightful information in this context. 
+
+Link to the contest can be found [here](https://solafune.com/competitions/68ad4759-4686-4bb3-94b8-7063f755b43d?menu=about&tab=overview)
+
 ## Folder structure: 
 ##### inf367: 
 folder with all files in this repository, and train_annotations from solafune
@@ -25,6 +31,8 @@ Notebook which contains data exploration and preparation of the Solafune dataset
 From top to bottom, this notebook runs hyperparameter tuning, final training, and finally writes a json file which can be submitted to solafune competition. prepare_dataset needs to be ran before running this notebook. 
 
 ## PseudoSeg
+
+PseudoSeg is a semi-supervised method, which tries to leverage unsupervised / weakly supervised data in addition to standard supervised data. It uses a refined version of Grad-CAM, gradient class activation maps, and generates pseudo labels by combining these maps with the standard decoder output. The refinement process is trained on supervised data, and the pseudo labels are used to train with unsupervised / weakly supervised data. We chose to implement this method because of the size of our supervised dataset, and because we found a dataset from an old [Kaggle competition](https://www.kaggle.com/competitions/planet-understanding-the-amazon-from-space/data) which seemed promising. 
 
 ### prepare_additional_dataset.ipynb
 

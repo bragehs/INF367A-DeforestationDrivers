@@ -1206,7 +1206,7 @@ def post_process_torch(prob_maps,
                     if len(np.unique(surrounding_classes)) == 1 and surrounding_classes[0] != 0:
                         pred_np[component] = surrounding_classes[0]
 
-        # Step 4: Optional small object removal
+        # Step 3: Optional small object removal
         if _remove_small_objects:
             for class_idx in range(1, smoothed_probs.shape[-1]):
                 class_mask = (pred_np == class_idx)
@@ -1214,7 +1214,7 @@ def post_process_torch(prob_maps,
                     filtered_mask = remove_small_objects(class_mask, min_size=min_size)
                     pred_np[class_mask & ~filtered_mask] = 0
 
-        # Step 5: Optional boundary smoothing
+        # Step 4: Optional boundary smoothing
         if smooth_boundaries:
             for class_idx in range(1, smoothed_probs.shape[-1]):
                 class_mask = (pred_np == class_idx)
