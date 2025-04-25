@@ -1,9 +1,14 @@
-folder structure: 
-inf367: folder with all files in this repository, and train_annotations from solafune
-train_images: folder with train images from solafune, in parent directory of inf367
-evaluation_images: folder with evaluation images from solafune, in parent directory of inf367
-train-tif-v2: folder with train_images from Kaggle, in parent directory of inf367
-train_v2.csv: folder with image labels from Kaggle,  in parent directory of inf367
+## Folder structure: 
+##### inf367: 
+folder with all files in this repository, and train_annotations from solafune
+##### train_images: 
+folder with train images from solafune, in parent directory of inf367
+##### evaluation_images: 
+folder with evaluation images from solafune, in parent directory of inf367
+##### train-tif-v2: 
+folder with train_images from Kaggle, in parent directory of inf367
+##### train_v2.csv:
+folder with image labels from Kaggle,  in parent directory of inf367
 
 ## Original Approach
 
