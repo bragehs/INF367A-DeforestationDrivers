@@ -38,7 +38,7 @@ PseudoSeg is a semi-supervised method, which tries to leverage unsupervised / we
 
 Notebook which prepares the Kaggle dataset that is leveraged as weakly supervised data. It maps from labels in kaggle dataset, to corresponding (or similar) labels in solafune dataset. Saves 1846 images to a .npy file, and saves an dataframe with labels in equal length.
 
-## PseudoSeg_implementation.ipynb
+### PseudoSeg_implementation.ipynb
 
  From top to bottom, this notebook also runs hyperparameter tuning, final training, and finally writes a submittable json file. Similar in many ways to original_implementation, and it uses many of the same functions. But some additional classes and functions are required in order to implement the PseudoSeg method. PseudoSegHead class contains the actual method. 
 
