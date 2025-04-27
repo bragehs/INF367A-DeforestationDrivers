@@ -489,7 +489,7 @@ class PreProcessing:
         print("Verification complete. No NaN values found.")
 
     def preprocess(self, method='open_cv_inpaint_telea'):
-        """Process TIF file and save result"""
+        """Fill NaN values and nomralize the images"""
         if self.train_set:
             images = self.train_images
             self.prepared_data = np.zeros((len(images), 12, 1024, 1024))
@@ -908,7 +908,7 @@ class SimpleHead(nn.Module):
     def forward(self, image_list, raw_features, targets=None):
         """
         Args:
-            image_list: (Not used here.)
+            image_list: (Not used here.) #needed to call model's forward function
             raw_features: A list of 5 feature tensors from final upsampling
         Returns:
             raw_outputs: Segmentation logits from decoder, shape [B, 5, H, W].
@@ -1001,7 +1001,7 @@ class RobustLoss(nn.Module):
 
   def __init__(self, delta=1.0, num_classes=5):
       """
-      Initializes the robust loss with a penalty factor delta.
+      Initializes the robust loss with a penalty factor delta. 
 
       Args:
           delta (float): The penalty factor. A positive value which reduces the
