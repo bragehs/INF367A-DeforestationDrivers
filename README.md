@@ -42,4 +42,14 @@ Notebook which prepares the Kaggle dataset that is leveraged as weakly supervise
 
  From top to bottom, this notebook also runs hyperparameter tuning, final training, and finally writes a submittable json file. Similar in many ways to original_implementation, and it uses many of the same functions. But some additional classes and functions are required in order to implement the PseudoSeg method. PseudoSegHead class contains the actual method. 
 
+## Segment-Then-Classify
+
+STC is a is a strategy for doing instance segmentation. It's made of two parts, one model which generates the segments and a second model which classifies the segments. This method seems promising as the competitions dataset was rather sparse. 
+
+### STC.ipynb
+
+This notebook contains the entire pipeline for STC. From generating training data from the training images. To training a classifier, using SAM on the evaluation images and finaly classifying on these segments. Some lines needs to be commentented in/out, since the paths from the already trained mode is local. The results from this method was deemed unsatisfactory. 
+
+### preprocessing.py 
+Contains several utils functions used in the baseline, but some have been altered to fit the STC pipeline.
 
