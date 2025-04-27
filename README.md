@@ -20,7 +20,7 @@ folder with image labels from Kaggle,  in parent directory of inf367
 
 ### original_utils.py
 
-Contains all the classes and functions used in original approach. Includes everything from preprocessing to predictions. Some of the methods are also imported for use in later implementations. This file does not need be explicitly ran. 
+Contains all the classes and functions used in original approach. Includes everything from preprocessing to predictions. Some of the methods are also imported for use in other implementations. This file does not need be explicitly ran. 
 
 ### prepare_dataset.ipynb
 
@@ -36,11 +36,11 @@ PseudoSeg is a semi-supervised method, which tries to leverage unsupervised / we
 
 ### prepare_additional_dataset.ipynb
 
-Notebook which prepares the Kaggle dataset that is leveraged as weakly supervised data. It maps from labels in kaggle dataset, to corresponding (or similar) labels in solafune dataset. Saves 1846 images to a .npy file, and saves an dataframe with labels in equal length.
+Notebook which prepares the Kaggle dataset that is leveraged as weakly supervised data. It maps from labels in kaggle dataset, to corresponding (or similar) labels in solafune dataset. Saves 1846 images to a .npy file, and saves an dataframe with labels in equal length. All code in this notebook is only used in PseudoSeg implementation. 
 
 ### PseudoSeg_implementation.ipynb
 
- From top to bottom, this notebook also runs hyperparameter tuning, final training, and finally writes a submittable json file. Similar in many ways to original_implementation, and it uses many of the same functions. But some additional classes and functions are required in order to implement the PseudoSeg method. PseudoSegHead class contains the actual method. 
+ From top to bottom, this notebook also runs hyperparameter tuning, final training, and finally writes a submittable json file. Similar in many ways to original_implementation, and it uses many of the same functions. But some additional classes and functions are required in order to implement the PseudoSeg method. PseudoSegHead class contains the actual method. All code in this notebook is only used for PseudoSeg implementation. 
 
 ## Segment-Then-Classify
 
