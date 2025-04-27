@@ -53,6 +53,14 @@ This notebook contains the entire pipeline for STC. From generating training dat
 ### preprocessing.py 
 Contains several utils functions used in the baseline, but some have been altered to fit the STC pipeline.
 
+## Segment Anything 2 (SAM2)
+
+Segment Anything 2 (SAM2) is a promptable foundation model for image segmentation. This approach uses predictions from the PseudoSeg model as prompts for SAM2 to potentially refine segmentation masks.
+
+### sam2.ipynb
+
+Contains the pipeline for the SAM2 refinement process. It first clones the SAM2 repository. Then, it loads the evaluation images and the corresponding PseudoSeg prediction masks. These masks are used as prompts to guide SAM2 in generating potentially improved segmentations for the evaluation set.
+
 
 ## NOTE
 
