@@ -53,3 +53,7 @@ This notebook contains the entire pipeline for STC. From generating training dat
 ### preprocessing.py 
 Contains several utils functions used in the baseline, but some have been altered to fit the STC pipeline.
 
+
+## NOTE
+
+Large Language Models were used generally to debug our code. 
