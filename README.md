@@ -4,6 +4,8 @@ Deforestation is the process of removing large areas of forests in order to make
 
 Link to the contest can be found [here](https://solafune.com/competitions/68ad4759-4686-4bb3-94b8-7063f755b43d?menu=about&tab=overview)
 
+Applied machine learning paper for this project here: "Applied_ML_paper.pdf"
+
 ## Folder structure: 
 ##### inf367: 
 folder with all files in this repository, and train_annotations from solafune
